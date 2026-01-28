@@ -1,5 +1,6 @@
 import io
 import os
+import json
 import uvicorn
 import numpy as np
 from PIL import Image
@@ -33,25 +34,71 @@ models.Base.metadata.create_all(bind=database.engine)
 
 # -------------------- LOAD ML MODEL --------------------
 
-USE_MOCK = True
+USE_MOCK = False
 model = None
+device = None
 
-# TensorFlow loading is disabled for now - using mock predictions
-# To enable: Install TensorFlow compatible with your Python version
-# and place plant_disease_model.h5 in the Backend folder
-print("⚠️ Using mock predictions (TensorFlow not loaded)")
+# Try to load PyTorch model
+MODEL_PATH = os.path.join(os.path.dirname(__file__), "plant_disease_model.pth")
+CLASSES_PATH = os.path.join(os.path.dirname(__file__), "classes.json")
 
-# Class labels
-CLASS_NAMES = ["Healthy", "Powdery Mildew", "Leaf Rust", "Apple Scab", "Tomato Early Blight"]
+try:
+    import torch
+    import torch.nn as nn
+    from torchvision import models as tv_models, transforms
+    
+    if os.path.exists(MODEL_PATH) and os.path.exists(CLASSES_PATH):
+        # Load class names and remedies
+        with open(CLASSES_PATH, 'r') as f:
+            classes_data = json.load(f)
+        
+        CLASS_NAMES = classes_data['class_names']  # Dict with int keys as strings
+        REMEDIES = classes_data['remedies']
+        
+        # Load model
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model = tv_models.resnet18(weights=None)
+        model.fc = nn.Linear(model.fc.in_features, len(CLASS_NAMES))
+        
+        checkpoint = torch.load(MODEL_PATH, map_location=device, weights_only=False)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        model = model.to(device)
+        model.eval()
+        
+        # Image transform
+        transform = transforms.Compose([
+            transforms.Resize((224, 224)),
+            transforms.ToTensor(),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        ])
+        
+        print(f"✅ Model loaded successfully with {len(CLASS_NAMES)} classes")
+        print(f"   Device: {device}")
+    else:
+        print(f"⚠️ Model file not found at {MODEL_PATH}")
+        USE_MOCK = True
+except ImportError:
+    print("⚠️ PyTorch not installed - using mock predictions")
+    USE_MOCK = True
+except Exception as e:
+    print(f"⚠️ Error loading model: {e}")
+    USE_MOCK = True
 
-# Remedies for detected diseases
-REMEDIES = {
-    "Healthy": "No treatment needed. Maintain regular watering and monitoring.",
-    "Powdery Mildew": "Apply organic fungicide and improve air circulation.",
-    "Leaf Rust": "Remove infected leaves and apply copper-based spray.",
-    "Apple Scab": "Prune infected leaves and apply sulfur-based fungicide.",
-    "Tomato Early Blight": "Remove lower leaves and apply copper-based spray.",
-}
+# Fallback class names and remedies for mock mode
+if USE_MOCK:
+    CLASS_NAMES = {
+        "0": "Apple_Scab", "1": "Apple_Black_Rot", "2": "Apple_Cedar_Rust",
+        "3": "Apple_Healthy", "4": "Blueberry_Healthy", "5": "Cherry_Powdery_Mildew"
+    }
+    REMEDIES = {
+        "Apple_Scab": "Apply fungicide sprays. Remove fallen leaves.",
+        "Apple_Black_Rot": "Prune infected branches. Apply copper fungicide.",
+        "Apple_Cedar_Rust": "Remove nearby juniper trees. Apply fungicide.",
+        "Apple_Healthy": "No treatment needed. Continue regular care.",
+        "Blueberry_Healthy": "No treatment needed. Maintain watering.",
+        "Cherry_Powdery_Mildew": "Apply sulfur-based fungicide."
+    }
+    print("⚠️ Using mock predictions")
 
 # -------------------- HEALTH CHECK --------------------
 
@@ -74,21 +121,25 @@ async def predict(
         # Read image bytes
         image_data = await file.read()
         image = Image.open(io.BytesIO(image_data)).convert("RGB")
-        image = image.resize((224, 224))
 
         if USE_MOCK or model is None:
             # Mock prediction for testing
-            predicted_class = random.choice(CLASS_NAMES)
+            class_names_list = list(CLASS_NAMES.values())
+            predicted_class = random.choice(class_names_list)
             confidence = round(random.uniform(85.0, 99.9), 2)
         else:
-            # Real ML prediction (requires TensorFlow)
-            img_array = np.array(image) / 255.0
-            img_array = np.expand_dims(img_array, axis=0)
-            predictions = model.predict(img_array)
-            predicted_class = CLASS_NAMES[np.argmax(predictions[0])]
-            confidence = float(np.max(predictions[0]) * 100)
+            # Real PyTorch prediction
+            img_tensor = transform(image).unsqueeze(0).to(device)
+            
+            with torch.no_grad():
+                outputs = model(img_tensor)
+                probabilities = torch.nn.functional.softmax(outputs, dim=1)
+                confidence_val, predicted_idx = torch.max(probabilities, 1)
+                
+            predicted_class = CLASS_NAMES[str(predicted_idx.item())]
+            confidence = round(confidence_val.item() * 100, 2)
 
-        remedy_text = REMEDIES.get(predicted_class, "Consult an agronomist.")
+        remedy_text = REMEDIES.get(predicted_class, "Consult an agronomist for proper treatment.")
 
         # Save to database
         new_log = models.ScanLog(

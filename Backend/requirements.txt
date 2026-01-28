@@ -6,3 +6,5 @@ python-multipart>=0.0.6
 pillow>=10.2.0
 numpy>=1.26.0
 pydantic>=2.5.0
+torch>=2.0.0
+torchvision>=0.15.0
