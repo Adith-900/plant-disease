@@ -1,0 +1,37 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+env/
+.env
+
+# Database
+*.db
+*.sqlite3
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Flutter
+plant/build/
+plant/.dart_tool/
+plant/.packages
+plant/.flutter-plugins
+plant/.flutter-plugins-dependencies
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Model file (too large for git)
+*.h5
+*.keras
+
+# Logs
+*.log
