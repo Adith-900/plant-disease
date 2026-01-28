@@ -13,9 +13,15 @@ from PIL import Image
 import json
 from pathlib import Path
 
-# Dataset paths
-TRAIN_DIR = r"C:\Users\adith\Downloads\archive\PlantDisease416x416\PlantDisease416x416\train"
-TEST_DIR = r"C:\Users\adith\Downloads\archive\PlantDisease416x416\PlantDisease416x416\test"
+# Dataset paths - Using BOTH folders for maximum data
+TRAIN_DIRS = [
+    r"C:\Users\adith\Downloads\archive\PlantDisease416x416\PlantDisease416x416\train",
+    r"C:\Users\adith\Downloads\archive\PlantDiseases100x100\PlantDiseases100x100\train",
+]
+TEST_DIRS = [
+    r"C:\Users\adith\Downloads\archive\PlantDisease416x416\PlantDisease416x416\test",
+    r"C:\Users\adith\Downloads\archive\PlantDiseases100x100\PlantDiseases100x100\test",
+]
 MODEL_OUTPUT = r"C:\Users\adith\OneDrive\Desktop\plant-disease\Backend\plant_disease_model.pth"
 CLASSES_OUTPUT = r"C:\Users\adith\OneDrive\Desktop\plant-disease\Backend\classes.json"
 
@@ -89,26 +95,32 @@ REMEDIES = {
 
 
 class PlantDiseaseDataset(Dataset):
-    """Custom dataset that reads YOLO format and extracts class labels"""
+    """Custom dataset that reads YOLO format and extracts class labels from multiple directories"""
     
-    def __init__(self, data_dir, transform=None):
-        self.data_dir = Path(data_dir)
+    def __init__(self, data_dirs, transform=None):
         self.transform = transform
         self.samples = []
         
-        # Find all jpg files and their corresponding txt files
-        for img_path in self.data_dir.glob("*.jpg"):
-            txt_path = img_path.with_suffix(".txt")
-            if txt_path.exists():
-                # Read class ID from txt file (first number)
-                with open(txt_path, 'r') as f:
-                    content = f.read().strip()
-                    if content:
-                        class_id = int(content.split()[0])
-                        if class_id in CLASS_NAMES:
-                            self.samples.append((str(img_path), class_id))
+        # Load from all directories
+        for data_dir in data_dirs:
+            data_path = Path(data_dir)
+            if not data_path.exists():
+                print(f"Warning: Directory not found: {data_dir}")
+                continue
+                
+            # Find all jpg files and their corresponding txt files
+            for img_path in data_path.glob("*.jpg"):
+                txt_path = img_path.with_suffix(".txt")
+                if txt_path.exists():
+                    # Read class ID from txt file (first number)
+                    with open(txt_path, 'r') as f:
+                        content = f.read().strip()
+                        if content:
+                            class_id = int(content.split()[0])
+                            if class_id in CLASS_NAMES:
+                                self.samples.append((str(img_path), class_id))
         
-        print(f"Loaded {len(self.samples)} samples from {data_dir}")
+        print(f"Loaded {len(self.samples)} total samples from {len(data_dirs)} directories")
     
     def __len__(self):
         return len(self.samples)
@@ -145,11 +157,11 @@ def train_model():
     ])
     
     # Load datasets
-    print("Loading training data...")
-    train_dataset = PlantDiseaseDataset(TRAIN_DIR, transform=train_transform)
+    print("Loading training data from all directories...")
+    train_dataset = PlantDiseaseDataset(TRAIN_DIRS, transform=train_transform)
     
-    print("Loading test data...")
-    test_dataset = PlantDiseaseDataset(TEST_DIR, transform=test_transform)
+    print("Loading test data from all directories...")
+    test_dataset = PlantDiseaseDataset(TEST_DIRS, transform=test_transform)
     
     train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, num_workers=0)
     test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False, num_workers=0)
@@ -167,7 +179,7 @@ def train_model():
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=3, gamma=0.1)
     
     # Training
-    num_epochs = 5  # Quick training - increase for better accuracy
+    num_epochs = 10  # More epochs for better accuracy
     best_acc = 0.0
     
     print(f"\nStarting training for {num_epochs} epochs...")
